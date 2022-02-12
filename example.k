@@ -1,0 +1,12 @@
+bastion server-1
+bastion server-2
+bastion server-3
+prometheus bastion
+prometheus server-1
+prometheus server-2
+prometheus server-3
+vault server-2
+vault bastion
+bastion internet
+server-3 internet
+prometheus internet

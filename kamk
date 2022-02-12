@@ -1,0 +1,203 @@
+#!/usr/local/bin/python3
+import math, random, sys
+
+width = 1.5
+
+class Node:
+  def __init__(self, tag):
+    self.x = 0
+    self.y = 0
+    self.r = 10
+    self.id = 0
+    self.tag = tag
+    self.links = []
+    self.springs = []
+    self.distances = []
+  def energy(self):
+    x = y = 0
+    for s in self.springs:
+      dx, dy = self.x-s.t.x, self.y-s.t.y
+      dist = math.sqrt(math.pow(dx ,2) + math.pow(dy ,2))
+      if s.f == s.t or dist == 0: continue
+      x += dx * s.strength * (1.0 - s.length / dist)
+      y += dy * s.strength * (1.0 - s.length / dist)
+    return math.sqrt(math.pow(x, 2) + math.pow(y, 2))
+  def move(self):
+    xx = xy = yx = yy = x = y = 0
+    for s in self.springs:
+      dx, dy = self.x-s.t.x, self.y-s.t.y
+      dist = math.sqrt(math.pow(dx ,2) + math.pow(dy ,2))
+      if s.f == s.t or dist == 0: continue
+      x += dx * s.strength * (1.0 - s.length / dist)
+      y += dy * s.strength * (1.0 - s.length / dist)
+      xy += s.strength * s.length * dx * dy / math.pow(dist, 3)
+      xx += s.strength * (1.0 - s.length * math.pow(dy, 2) / math.pow(dist, 3))
+      yy += s.strength * (1.0 - s.length * math.pow(dx, 2) / math.pow(dist, 3))
+    xy = yx
+    denom = xx * yy - xy * yx
+    self.x += (xy * y - yy * x) / denom
+    self.y += (xy * x - xx * y) / denom
+    return [(xy * y - yy * x) / denom, (xy * x - xx * y) / denom]
+  def __str__(self):
+    s = ''
+    s += f'<circle cx="{self.x}" cy="{self.y}" r="{self.r}" stroke="#888888" fill="#383838" stroke-width="{width}" />'
+    s += f'<text x="{self.x+1}" y="{self.y+2.25+1}" text-anchor="middle" style="font: 9px bold; fill: black" >{self.tag}</text>'
+    s += f'<text x="{self.x}" y="{self.y+2.25}" text-anchor="middle" style="font: 9px bold; fill: #888888" >{self.tag}</text>'
+    return s
+
+class Link:
+  def __init__(self, f, t):
+    self.f = f
+    self.t = t
+  def __str__(self):
+    return f'<line x1="{self.f.x}" y1="{self.f.y}" x2="{self.t.x}" y2="{self.t.y}" stroke="#3f423e" stroke-width="{width}"/>'
+
+class Spring:
+  def __init__(self, length, strength, f, t):
+    self.length = length
+    self.strength = strength
+    self.f = f
+    self.t = t
+
+    self.width = length * strength / 100
+    if type(self.width) != float: self.width = 0
+  def __str__(self):
+    return f'<line x1="{self.f.x}" y1="{self.f.y}" x2="{self.t.x}" y2="{self.t.y}" stroke="#00FF0055" stroke-width="{self.width}"/>'
+
+class Graph:
+  def __init__(self, nodes):
+    self.nodes = nodes
+
+    self.maxdistance = 0
+    self.springlength = 0
+    self.springk = 300
+    self.energythreshold = 1e-2
+    self.maxsteadyenergy = 50
+    self.maxvertices = 50
+
+    # Enumerate all nodes
+    for id, n in enumerate(self.nodes):
+      n.id = id
+
+    # Place in circles
+    angle = 2 * math.pi / len(self.nodes)
+    for n in nodes:
+      n.x = math.cos(angle*n.id)
+      n.y = math.sin(angle*n.id)
+
+    # Init distance matrix
+    for n1 in self.nodes:
+      for n2 in self.nodes:
+        n1.distances.append((math.inf, 0)[n1 == n2])
+
+    # Mark existing edges
+    for n in self.nodes:
+      for l in n.links:
+        if l.t != l.f: n.distances[l.t.id] = self.nodes[l.t.id].distances[n.id] = 1
+
+    # Floyd-Warshall algorithm
+    for n1 in self.nodes:
+      for n2 in self.nodes:
+        for n3 in self.nodes:
+          n2.distances[n3.id] = min(n2.distances[n3.id], n2.distances[n1.id] + n1.distances[n3.id])
+
+    # Find biggest distance
+    for n in self.nodes:
+      for d in n.distances:
+        if self.maxdistance < d and d != math.inf:
+          self.maxdistance = d
+
+    self.springlength = 1.0 / self.maxdistance
+
+    # Init springs
+    for n1 in self.nodes:
+      for n2 in self.nodes:
+        if n1 != n2 and type(n1.distances[n2.id]) == int:
+          n1.springs.append(Spring(
+            n1.distances[n2.id] * self.springlength,
+            self.springk / math.pow(n1.distances[n2.id], 2),
+            n1,
+            n2))
+        elif n1.distances[n2.id] == math.inf:
+           n1.springs.append(Spring(
+            self.springlength,
+            self.springk,
+            n1,
+            n2))
+        else:
+          n1.springs.append(Spring(0,0,n1,n2))
+
+    # Kamada-Kawaii algorithm
+    maxenergynode = max(self.nodes, key=lambda n: n.energy())
+    maxenergy = maxenergynode.energy()
+    steadyenergy = 0
+    while maxenergy > self.energythreshold and steadyenergy < self.maxsteadyenergy:
+      vertices = 0
+      while True:
+        maxenergynode.move()
+        vertices += 1
+        if maxenergynode.energy() <= self.energythreshold or vertices >= self.maxvertices:
+          break
+      maxenergynode = max(self.nodes, key=lambda n: n.energy())
+      maxenergyprev = maxenergy
+      maxenergy = maxenergynode.energy()
+      if math.fabs(maxenergy- maxenergyprev) < 1e-20:
+        steadyenergy+=1
+      else:
+        steadyenergy=0
+
+    # Rescale
+    cw = max(self.nodes, key=lambda n: n.x).x - min(self.nodes, key=lambda n: n.x).x
+    ch = max(self.nodes, key=lambda n: n.y).y - min(self.nodes, key=lambda n: n.y).y
+    cenx = max(self.nodes, key=lambda n: n.x).x + min(self.nodes, key=lambda n: n.x).x
+    ceny = max(self.nodes, key=lambda n: n.y).y + min(self.nodes, key=lambda n: n.y).y
+    xscale = 500/cw
+    yscale = 500/ch
+    scale = 0.9 * min(xscale, yscale)
+    xoffset = cenx / 2 * scale
+    yoffset = ceny / 2 * scale
+    for n in self.nodes:
+      n.x = n.x*scale - xoffset + 300
+      n.y = n.y*scale - yoffset + 300
+    self.w = max(self.nodes, key=lambda n: n.x).x + 50
+    self.h = max(self.nodes, key=lambda n: n.y).y + 50
+
+  def __str__(self):
+    s = '<?xml version="1.0"?>'
+    s += f'<svg viewBox="0 0 {self.w} {self.h}" version="1.1" xmlns="http://www.w3.org/2000/svg">'
+    s += f'<rect width="100%" height="100%" fill="#666b64"/>'
+#    for n in self.nodes:
+#      for sp in n.springs:
+#        s += str(sp) + '\n'
+    for n in self.nodes:
+      for l in n.links:
+        s += str(l) + '\n'
+    for n in self.nodes:
+      s += str(n) + '\n'
+    s += '</svg>'
+    return s
+
+def tagsearch(tag, nodes):
+  for n in nodes:
+    if n.tag == tag:
+      return n
+  nodes.append(Node(tag))
+  return nodes[-1]
+
+nodes = []
+for line in sys.stdin:
+  tags = line.strip().split(' ', maxsplit=2)
+  if len(tags) == 2:
+    n1 = tagsearch(tags[0], nodes)
+    n2 = tagsearch(tags[1], nodes)
+    n1.links.append(Link(n1, n2))
+  elif len(tags) == 1:
+    tagsearch(tags[0], nodes)
+  else:
+    print('Illegal format', file=sys.stderr)
+
+#for n in nodes:
+#  print(n.tag, file=sys.stderr)
+
+g = Graph(nodes)
+print(g)
